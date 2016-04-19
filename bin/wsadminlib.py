@@ -81,7 +81,7 @@ for module in _modules:
   try:
     locals()[module] = __import__(module, {}, {}, [])
   except ImportError:
-    print 'Error importing %s.' % module
+    print 'Warning: Error importing %s.' % module
 
 # Provide access to wsadminlib methods when accessed as an import.
 # This is benign if wsadminlib is opened with execfile().
@@ -3695,30 +3695,33 @@ def installApplication( filename, servers, clusternames, options ):
     sop(m,"Calling AdminApp.install of %s with arglist = %s" % ( filename, repr(arglist) ))
     AdminApp.install( filename, arglist )
 
-def updateApplication(filename):
+def updateApplication(appname, filename, options):
     """Update an application with a new ear file"""
     # We need to know the application name - it's in an xml file
     # in the ear
-    import zipfile
-    zf = zipfile.ZipFile(filename, "r")
-    appxml = zf.read("META-INF/application.xml")
-    zf.close()
+	# Update:
+	# Disable xml parsing. Pass appname & option as parameters.
+    
+	# Removing the xml file parsing since appname/options are passed as parameters
+	#import zipfile
+    #zf = zipfile.ZipFile(filename, "r")
+    #appxml = zf.read("META-INF/application.xml")
+    #zf.close()
 
     # parse the xml file
     # (cheat - it's simple)
-    start_string = "<display-name>"
-    end_string = "</display-name>"
-    start_index = appxml.find(start_string) + len(start_string)
-    end_index = appxml.find(end_string)
+    #start_string = "<display-name>"
+    #end_string = "</display-name>"
+    #start_index = appxml.find(start_string) + len(start_string)
+    #end_index = appxml.find(end_string)
 
-    appname = appxml[start_index:end_index].strip()
-
+	# Get appname as input parameter instead. This was an issue because some application.xml appname is not the same as the actual application name.
+    #appname = appxml[start_index:end_index].strip()
+	
     AdminApp.update(appname,            # name of application
                     'app',              # type of update to do
                     # options:
-                    ['-operation', 'update', # redundant but required
-                     '-contents', filename,
-                     ],
+                    options,
                     )
 
 def setDeploymentAutoStart(deploymentname, enabled, deploymenttargetname=None):
@@ -6473,6 +6476,19 @@ def setClassloaderToParentLast(appname):
         if module.find('WebModuleDeployment') != -1:
             AdminConfig.modify(module, [['classloaderMode', 'PARENT_LAST']])
 
+# Added for PARENT_FIRST support.
+def setClassloaderToParentFirst(appname):
+    deployments = AdminConfig.getid("/Deployment:%s/" % (appname) )
+    deploymentObject = AdminConfig.showAttribute(deployments, "deployedObject")
+    AdminConfig.modify(deploymentObject, [['warClassLoaderPolicy', 'SINGLE']])
+    classloader = AdminConfig.showAttribute(deploymentObject, "classloader")
+    AdminConfig.modify(classloader, [['mode', 'PARENT_FIRST']])
+    modules = AdminConfig.showAttribute(deploymentObject, "modules")
+    arrayModules = modules[1:len(modules)-1].split(" ")
+    for module in arrayModules:
+        if module.find('WebModuleDeployment') != -1:
+            AdminConfig.modify(module, [['classloaderMode', 'PARENT_FIRST']])
+			
 def deleteAllClassloaders(nodename, servername):
     """Deletes all classloaders for the given server"""
     m = "deleteAllClassloaders:"
@@ -10627,3 +10643,61 @@ def removeAllDisabledSessionCookies() :
 
 #end_def
 
+# Get Application status
+def getApplicationStatus(clusterName, appName):
+    clusterID=getClusterId(clusterName)
+
+    if (len(clusterID) != 0):
+        clusterObj = AdminControl.completeObjectName("type=Cluster,name="+clusterName+",*" )
+        clusterStatus = AdminControl.getAttribute(clusterObj, "state" )
+        print "cluster ID:", clusterID
+        print "cluster Status:", clusterStatus
+        print ""
+
+        running = "websphere.cluster.running"
+        partialstart = "websphere.cluster.partial.start"
+        starting = "websphere.cluster.starting"
+        stopped = "websphere.cluster.stopped"
+        statusCheck=0
+
+        while ( statusCheck <= 3 and clusterStatus != running ):
+            print "%s" % time.ctime()
+            clusterStatus =  AdminControl.getAttribute(clusterObj, "state" )
+            print "Cluster Status: " + clusterStatus
+            statusCheck += 1
+            time.sleep(60)
+
+            if ( clusterStatus == stopped ):
+                print "Cluster Status: ", clusterStatus, ", so ending the program"
+                sys.exit(1)
+                #endif
+        #endwhile
+
+    else:
+        print "Error: ", clusterName, "does not exist. Please pass the right clusterName"
+        sys.exit(1)
+    #endif
+
+    # List the servers in a cluster
+    clusterMembers = listServersInCluster(clusterName)
+    for clusterMember in clusterMembers:
+        serverName=AdminConfig.showAttribute(clusterMember, 'memberName')
+        #  Prints Only Running Cluster Members
+        aServer = AdminControl.completeObjectName("type=Server,name=" + serverName + ",*")
+
+        if aServer == "":
+            print "Server,", serverName, "is down."
+            print ""
+        else:
+            aState=AdminControl.getAttribute(aServer, 'state')
+            print "Server", serverName, "is in a", aState, "state"
+            appStatus = AdminControl.queryNames("WebSphere:type=Application,name="+appName+",process="+serverName+",*")
+            if appStatus == "":
+                print "Application:", appName, "is not running on", serverName, "\n"
+            else:
+                print "Application:", appName, "is running on", serverName, "\n"
+            #endif
+        #endif
+    #endfor
+
+#endif
